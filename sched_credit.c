@@ -1962,10 +1962,16 @@ static void balloon_timer_fn(void *data)
     //         NOW(), svc->sdom->dom->domain_id, svc->vcpu->vcpu_id);
 
     spin_lock_irqsave(&prv->lock, flags);
-    if ( test_and_clear_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) &&
-         atomic_dec_and_test(&svc->balloon_count) )
-    {
-        vcpu_unpause(svc->vcpu);
+
+    if ( !atomic_read(&svc->balloon_count) ) {
+        spin_unlock_irqrestore(&prv->lock, flags);
+        return;
+    }
+
+    if ( test_and_clear_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) ) {
+        if ( atomic_dec_and_test(&svc->balloon_count) ) {
+            vcpu_unpause(svc->vcpu);
+        }
     }
     spin_unlock_irqrestore(&prv->lock, flags);
 }
@@ -1976,21 +1982,26 @@ csched_balloon(const struct scheduler *ops, struct vcpu *v,
 {
     struct csched_private *prv = CSCHED_PRIV(ops);
     struct csched_vcpu *svc = CSCHED_VCPU(v);
+    s_time_t now = NOW();
     unsigned long flags;
 
     // printk("[%ld]csched_balloon: dom=%d vcpu=%d timeout=%llu\n",
     //        NOW(), v->domain->domain_id, v->vcpu_id, balloon->timeout);
 
-    stop_timer(&svc->balloon_timer);
-    set_timer(&svc->balloon_timer, NOW() + balloon->timeout);
-
     spin_lock_irqsave(&prv->lock, flags);
-    if ( !test_and_set_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) )
-    {
+
+    if ( atomic_read(&svc->balloon_count) ) {
+        spin_unlock_irqrestore(&prv->lock, flags);
+        return;
+    }
+
+    if ( !test_and_set_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) ) {
         atomic_inc(&svc->balloon_count);
         vcpu_pause_nosync(svc->vcpu);
     }
     spin_unlock_irqrestore(&prv->lock, flags);
+
+    set_timer(&svc->balloon_timer, now + balloon->timeout);
 }
 
 static void 
@@ -1999,6 +2010,7 @@ csched_deballoon(const struct scheduler *ops, struct vcpu *v)
     struct csched_vcpu * svc = CSCHED_VCPU(v);
 
     stop_timer(&svc->balloon_timer);
+
     balloon_timer_fn((void*)svc);
 }
 /***********************[end]***************************************/
