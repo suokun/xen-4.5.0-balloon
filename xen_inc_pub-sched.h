@@ -120,6 +120,15 @@
 #define SCHEDOP_watchdog    6
 /* ` } */
 
+/***********************[begin]*************************************/
+#define SCHEDOP_balloon 11
+struct sched_balloon {
+    unsigned long long timeout;
+};
+typedef struct sched_balloon sched_balloon_t;
+DEFINE_XEN_GUEST_HANDLE(sched_balloon_t);
+/***********************[end]***************************************/
+
 struct sched_shutdown {
     unsigned int reason; /* SHUTDOWN_* => enum sched_shutdown_reason */
 };

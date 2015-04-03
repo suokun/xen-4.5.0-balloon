@@ -727,6 +727,20 @@ static void vcpu_block_enable_events(void)
     vcpu_block();
 }
 
+/***********************[begin]*************************************/
+static void do_balloon(struct sched_balloon *sched_balloon)
+{
+    struct vcpu *v = current;
+
+    // printk("do_balloon: timeout = %llu\n", sched_balloon->timeout);
+
+    if (sched_balloon->timeout <= 0)
+        return;
+
+    SCHED_OP(VCPU2OP(v), balloon, v, sched_balloon);
+}
+/***********************[end]***************************************/
+
 static long do_poll(struct sched_poll *sched_poll)
 {
     struct vcpu   *v = current;
@@ -990,6 +1004,22 @@ ret_t do_sched_op(int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
 
         break;
     }
+
+/***********************[begin]*************************************/    
+    case SCHEDOP_balloon:
+    {
+        struct sched_balloon sched_balloon;
+
+        ret = -EFAULT;
+        if ( copy_from_guest(&sched_balloon, arg, 1) )
+            break;
+
+        do_balloon(&sched_balloon);
+        ret = 0;
+
+        break;
+    }
+/***********************[end]***************************************/
 
     case SCHEDOP_remote_shutdown:
     {

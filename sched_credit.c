@@ -172,6 +172,11 @@ struct csched_vcpu {
     s_time_t start_time;   /* When we were scheduled (used for credit) */
     unsigned flags;
     int16_t pri;
+/***********************[begin]*************************************/
+    struct csched_private *csched_prv;
+    struct timer balloon_timer; /* for SCHEDOP_balloon */
+    atomic_t balloon_count;
+/***********************[end]***************************************/
 #ifdef CSCHED_STATS
     struct {
         int credit_last;
@@ -221,6 +226,7 @@ struct csched_private {
 
 static void csched_tick(void *_cpu);
 static void csched_acct(void *dummy);
+static void balloon_timer_fn(void *data);
 
 static inline int
 __vcpu_on_runq(struct csched_vcpu *svc)
@@ -874,6 +880,13 @@ csched_alloc_vdata(const struct scheduler *ops, struct vcpu *vc, void *dd)
     svc->vcpu = vc;
     svc->pri = is_idle_domain(vc->domain) ?
         CSCHED_PRI_IDLE : CSCHED_PRI_TS_UNDER;
+
+/***********************[begin]*************************************/
+    svc->csched_prv = CSCHED_PRIV(ops);
+    init_timer(&svc->balloon_timer, balloon_timer_fn,
+               svc, svc->vcpu->processor);
+    atomic_set(&svc->balloon_count, 0);
+/***********************[end]***************************************/
     SCHED_VCPU_STATS_RESET(svc);
     SCHED_STAT_CRANK(vcpu_init);
     return svc;
@@ -892,6 +905,10 @@ static void
 csched_free_vdata(const struct scheduler *ops, void *priv)
 {
     struct csched_vcpu *svc = priv;
+
+/***********************[begin]*************************************/
+    kill_timer(&svc->balloon_timer);
+/***********************[end]***************************************/
 
     BUG_ON( !list_empty(&svc->runq_elem) );
 
@@ -1357,7 +1374,8 @@ csched_acct(void* dummy)
                 svc->pri = CSCHED_PRI_TS_UNDER;
 
                 /* Unpark any capped domains whose credits go positive */
-                if ( test_and_clear_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) )
+                if ( !atomic_read(&svc->balloon_count) &&
+                     test_and_clear_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) )
                 {
                     /*
                      * It's important to unset the flag AFTER the unpause()
@@ -1682,10 +1700,12 @@ csched_schedule(
      * urgent work... If not, csched_load_balance() will return snext, but
      * already removed from the runq.
      */
-    if ( snext->pri > CSCHED_PRI_TS_OVER )
+    if ( snext->pri > CSCHED_PRI_TS_OVER ) {
         __runq_remove(snext);
-    else
+    } else {
         snext = csched_load_balance(prv, cpu, snext, &ret.migrated);
+        // migrate_timer(&snext->balloon_timer, cpu);
+    }
 
     /*
      * Update idlers mask if necessary. When we're idling, other CPUs
@@ -1930,6 +1950,59 @@ static void csched_tick_resume(const struct scheduler *ops, unsigned int cpu)
             - now % MICROSECS(prv->tick_period_us) );
 }
 
+
+/***********************[begin]*************************************/
+static void balloon_timer_fn(void *data)
+{
+    struct csched_vcpu *svc = data;
+    struct csched_private *prv = svc->csched_prv;
+    unsigned long flags;
+
+    // printk("[%ld]csched_deballoon: dom=%d vcpu=%d\n",
+    //         NOW(), svc->sdom->dom->domain_id, svc->vcpu->vcpu_id);
+
+    spin_lock_irqsave(&prv->lock, flags);
+    if ( test_and_clear_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) &&
+         atomic_dec_and_test(&svc->balloon_count) )
+    {
+        vcpu_unpause(svc->vcpu);
+    }
+    spin_unlock_irqrestore(&prv->lock, flags);
+}
+
+static void 
+csched_balloon(const struct scheduler *ops, struct vcpu *v,
+               const struct sched_balloon *balloon)
+{
+    struct csched_private *prv = CSCHED_PRIV(ops);
+    struct csched_vcpu *svc = CSCHED_VCPU(v);
+    unsigned long flags;
+
+    // printk("[%ld]csched_balloon: dom=%d vcpu=%d timeout=%llu\n",
+    //        NOW(), v->domain->domain_id, v->vcpu_id, balloon->timeout);
+
+    stop_timer(&svc->balloon_timer);
+    set_timer(&svc->balloon_timer, NOW() + balloon->timeout);
+
+    spin_lock_irqsave(&prv->lock, flags);
+    if ( !test_and_set_bit(CSCHED_FLAG_VCPU_PARKED, &svc->flags) )
+    {
+        atomic_inc(&svc->balloon_count);
+        vcpu_pause_nosync(svc->vcpu);
+    }
+    spin_unlock_irqrestore(&prv->lock, flags);
+}
+
+static void 
+csched_deballoon(const struct scheduler *ops, struct vcpu *v)
+{
+    struct csched_vcpu * svc = CSCHED_VCPU(v);
+
+    stop_timer(&svc->balloon_timer);
+    balloon_timer_fn((void*)svc);
+}
+/***********************[end]***************************************/
+
 static struct csched_private _csched_priv;
 
 const struct scheduler sched_credit_def = {
@@ -1967,4 +2040,9 @@ const struct scheduler sched_credit_def = {
 
     .tick_suspend   = csched_tick_suspend,
     .tick_resume    = csched_tick_resume,
+
+/***********************[begin]*************************************/
+    .balloon        = csched_balloon,
+    .deballoon      = csched_deballoon,
+/***********************[end]***************************************/
 };

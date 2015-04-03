@@ -9,6 +9,7 @@
 #define __XEN_SCHED_IF_H__
 
 #include <xen/percpu.h>
+#include <public/sched.h>
 
 /* A global pointer to the initial cpupool (POOL0). */
 extern struct cpupool *cpupool0;
@@ -163,6 +164,12 @@ struct scheduler {
 
     void         (*tick_suspend)    (const struct scheduler *, unsigned int);
     void         (*tick_resume)     (const struct scheduler *, unsigned int);
+
+/***********************[begin]*************************************/
+    void         (*balloon)        (const struct scheduler *, struct vcpu *,
+                                    const struct sched_balloon *);
+    void         (*deballoon)      (const struct scheduler *, struct vcpu *);
+/***********************[end]***************************************/
 };
 
 extern const struct scheduler sched_sedf_def;
