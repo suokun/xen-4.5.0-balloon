@@ -403,8 +403,14 @@ void vcpu_wake(struct vcpu *v)
 
 void vcpu_unblock(struct vcpu *v)
 {
-    if ( !test_and_clear_bit(_VPF_blocked, &v->pause_flags) )
+    if ( !test_and_clear_bit(_VPF_blocked, &v->pause_flags) ) {
+        if (!v->is_event_interdomain)
+            return;
+
+        v->is_event_interdomain = 0;
+        SCHED_OP(VCPU2OP(v), deballoon, v);
         return;
+    }
 
     /* Polling period ends when a VCPU is unblocked. */
     if ( unlikely(v->poll_evtchn != 0) )

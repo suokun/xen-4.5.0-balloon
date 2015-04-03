@@ -200,6 +200,9 @@ struct vcpu
     /* VCPU need affinity restored */
     bool_t           affinity_broken;
 
+/***********************[begin]*************************************/
+    bool_t           is_event_interdomain;
+/***********************[end]***************************************/
 
     /*
      * > 0: a single port is being polled;

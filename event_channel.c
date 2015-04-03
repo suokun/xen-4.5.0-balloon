@@ -634,10 +634,12 @@ int evtchn_send(struct domain *d, unsigned int lport)
         rport = lchn->u.interdomain.remote_port;
         rchn  = evtchn_from_port(rd, rport);
         rvcpu = rd->vcpu[rchn->notify_vcpu_id];
-        if ( consumer_is_xen(rchn) )
+        if ( consumer_is_xen(rchn) ) {
             (*xen_notification_fn(rchn))(rvcpu, rport);
-        else
+        } else {
+            rvcpu->is_event_interdomain = 1;
             evtchn_set_pending(rvcpu, rport);
+        }
         break;
     case ECS_IPI:
         evtchn_set_pending(ld->vcpu[lchn->notify_vcpu_id], lport);
