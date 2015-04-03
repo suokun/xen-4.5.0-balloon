@@ -1957,11 +1957,19 @@ static void balloon_timer_fn(void *data)
     struct csched_vcpu *svc = data;
     struct csched_private *prv = svc->csched_prv;
     unsigned long flags;
+    int credit;
 
     // printk("[%ld]csched_deballoon: dom=%d vcpu=%d\n",
     //         NOW(), svc->sdom->dom->domain_id, svc->vcpu->vcpu_id);
 
     spin_lock_irqsave(&prv->lock, flags);
+
+    credit = atomic_read(&svc->credit);
+    if (credit < 0) {
+        svc->pri = CSCHED_PRI_TS_OVER;
+    } else {
+        svc->pri = CSCHED_PRI_TS_UNDER;
+    }
 
     if ( !atomic_read(&svc->balloon_count) ) {
         spin_unlock_irqrestore(&prv->lock, flags);
